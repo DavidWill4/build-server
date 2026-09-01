@@ -50,6 +50,10 @@ jobs:
         shell: pwsh
         env:
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          FRP_SERVER_HOST: ${{ secrets.FRP_SERVER_HOST }}
+          FRP_SERVER_PORT: ${{ secrets.FRP_SERVER_PORT }}
+          FRP_TOKEN: ${{ secrets.FRP_TOKEN }}
+          FRP_REMOTE_PORT: ${{ secrets.FRP_REMOTE_PORT }}
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -98,18 +102,53 @@ jobs:
             }
           } catch {}
 
-          # 4. 启动原生低延迟网络隧道（优先 Ngrok 原生 TCP，备用 Cloudflare）
+          # 4. 启动原生低延迟网络隧道（优先专属 FRP 专线，备用 Ngrok/Cloudflare）
           $sshCmd = ""
           $tunnelNode = ""
 
-          if ($env:NGROK_AUTHTOKEN) {
+          # 4.1 专属 FRP 专线隧道（超低延迟）
+          if ($env:FRP_SERVER_HOST -and $env:FRP_TOKEN) {
+            try {
+              $frpUrl = "https://github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_windows_amd64.zip"
+              Invoke-WebRequest -Uri $frpUrl -OutFile "C:\frp.zip" | Out-Null
+              Expand-Archive -Path "C:\frp.zip" -DestinationPath "C:\frp" -Force | Out-Null
+              $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe").FullName
+
+              $frpcToml = @"
+serverAddr = "$($env:FRP_SERVER_HOST)"
+serverPort = $($env:FRP_SERVER_PORT || 50050)
+
+auth.method = "token"
+auth.token = "$($env:FRP_TOKEN)"
+
+transport.tls.enable = true
+
+[[proxies]]
+name = "build-ssh-$($env:GITHUB_RUN_ID)"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = $($env:FRP_REMOTE_PORT || 50055)
+"@
+              Set-Content -Path "C:\frpc.toml" -Value $frpcToml -Encoding utf8
+              Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -WindowStyle Hidden
+
+              Start-Sleep -Seconds 3
+              $rPort = $env:FRP_REMOTE_PORT || "50055"
+              $sshCmd = "ssh -p $rPort runneradmin@$($env:FRP_SERVER_HOST)"
+              $tunnelNode = "$($env:FRP_SERVER_HOST):$rPort (专属 FRP 低延迟专线)"
+            } catch {}
+          }
+
+          # 4.2 备用 Ngrok 原生 TCP 隧道
+          if (-not $sshCmd -and $env:NGROK_AUTHTOKEN) {
             try {
               choco install ngrok -y --no-progress | Out-Null
               $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
               ngrok config add-authtoken $env:NGROK_AUTHTOKEN | Out-Null
               Start-Process -FilePath "ngrok.exe" -ArgumentList "tcp 22 --log=stdout" -RedirectStandardOutput "C:\ngrok.log" -WindowStyle Hidden
 
-              for ($i = 0; $i -lt 20; $i++) {
+              for ($i = 0; $i -lt 15; $i++) {
                 Start-Sleep -Seconds 2
                 try {
                   $res = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 2
@@ -117,7 +156,7 @@ jobs:
                     $pUrl = $res.tunnels[0].public_url
                     $u = [System.Uri]$pUrl
                     $sshCmd = "ssh -p $($u.Port) runneradmin@$($u.Host)"
-                    $tunnelNode = "$($u.Host):$($u.Port) (Ngrok 原生极速 TCP)"
+                    $tunnelNode = "$($u.Host):$($u.Port) (Ngrok 原生 TCP)"
                     break
                   }
                 } catch {}
@@ -125,6 +164,7 @@ jobs:
             } catch {}
           }
 
+          # 4.3 备用 Cloudflare 隧道
           if (-not $sshCmd) {
             Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe" | Out-Null
             $logPath = "C:\cloudflared.log"
@@ -153,7 +193,7 @@ jobs:
 
           # 5. 推送 Telegram 私密消息
           $lines = @(
-            "🚀 <b>构建环境已就绪（极速原生 TCP 模式）</b>",
+            "🚀 <b>构建环境已就绪（专属 FRP 极速专线）</b>",
             "",
             "💻 <b>系统架构：</b> Windows Server (x86_64)",
             "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (WARP 净化)",
@@ -172,7 +212,7 @@ jobs:
             "🌐 <b>隧道节点：</b>",
             "<code>$tunnelNode</code>",
             "",
-            "💡 <i>提示：原生 TCP 模式延迟低至毫秒级，打字如本地般流畅。构建完毕输入 exit 即可自毁。</i>"
+            "💡 <i>提示：专属 VPS 专线延迟极低，打字如本地般流畅。构建完毕输入 exit 即可自毁。</i>"
           )
           $body = @{
             chat_id = $env:TELEGRAM_CHAT_ID
