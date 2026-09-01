@@ -1,0 +1,14 @@
+{
+  "outbound": "20.127.239.243 (Protected)",
+  "ngrok_node": "2.tcp.ngrok.io:13906",
+  "frp_node": "8.209.199.62:50011",
+  "cf_cmd": "ssh -o ProxyCommand=\"cloudflared access tcp --hostname %h\" runneradmin@campus-articles-father-casio.trycloudflare.com",
+  "password": "(已使用本地私钥免密认证)",
+  "run_id": "33479796995",
+  "target_env": "Windows Server 2025 (x86_64)",
+  "destroy_at": "2026-09-01 20:46:31 (北京时间)",
+  "created_at": "2026-09-01 14:56:31 (北京时间)",
+  "ngrok_cmd": "ssh -p 13906 runneradmin@2.tcp.ngrok.io",
+  "frp_cmd": "ssh -p 50011 runneradmin@8.209.199.62",
+  "cf_node": "campus-articles-father-casio.trycloudflare.com"
+}
