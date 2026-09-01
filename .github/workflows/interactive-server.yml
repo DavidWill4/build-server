@@ -132,7 +132,7 @@ jobs:
                 "localPort = 22",
                 "remotePort = $rPort"
               )
-              Set-Content -Path "C:\frpc.toml" -Value ($lines -join "`n") -Encoding utf8
+              Set-Content -Path "C:\frpc.toml" -Value ($lines -join "`n") -Encoding ascii
               Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -RedirectStandardOutput "C:\frpc.log" -RedirectStandardError "C:\frpc_err.log" -WindowStyle Hidden
 
               Start-Sleep -Seconds 3
