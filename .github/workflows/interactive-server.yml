@@ -114,29 +114,29 @@ jobs:
               Expand-Archive -Path "C:\frp.zip" -DestinationPath "C:\frp" -Force | Out-Null
               $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe").FullName
 
-              $frpcToml = @"
-serverAddr = "$($env:FRP_SERVER_HOST)"
-serverPort = $($env:FRP_SERVER_PORT || 50050)
+              $port = if ($env:FRP_SERVER_PORT) { $env:FRP_SERVER_PORT } else { "50050" }
+              $rPort = if ($env:FRP_REMOTE_PORT) { $env:FRP_REMOTE_PORT } else { "50055" }
 
-auth.method = "token"
-auth.token = "$($env:FRP_TOKEN)"
+              $toml = @(
+                "serverAddr = `"$($env:FRP_SERVER_HOST)`"",
+                "serverPort = $port",
+                "auth.method = `"token`"",
+                "auth.token = `"$($env:FRP_TOKEN)`"",
+                "transport.tls.enable = true",
+                "[[proxies]]",
+                "name = `"build-ssh-$($env:GITHUB_RUN_ID)`"",
+                "type = `"tcp`"",
+                "localIP = `"127.0.0.1`"",
+                "localPort = 22",
+                "remotePort = $rPort"
+              ) -join "`n"
 
-transport.tls.enable = true
-
-[[proxies]]
-name = "build-ssh-$($env:GITHUB_RUN_ID)"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 22
-remotePort = $($env:FRP_REMOTE_PORT || 50055)
-"@
-              Set-Content -Path "C:\frpc.toml" -Value $frpcToml -Encoding utf8
+              Set-Content -Path "C:\frpc.toml" -Value $toml -Encoding utf8
               Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -WindowStyle Hidden
 
               Start-Sleep -Seconds 3
-              $rPort = $env:FRP_REMOTE_PORT || "50055"
               $sshCmd = "ssh -p $rPort runneradmin@$($env:FRP_SERVER_HOST)"
-              $tunnelNode = "$($env:FRP_SERVER_HOST):$rPort (专属 FRP 低延迟专线)"
+              $tunnelNode = "$($env:FRP_SERVER_HOST):$rPort (专属 FRP 极速专线)"
             } catch {}
           }
 
