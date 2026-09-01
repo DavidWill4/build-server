@@ -1,16 +1,34 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
 
-# 1. 生成 16 位完全随机高熵密码（纯字母数字，防止 HTML 转义解析异常）
-$chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+# 1. 生成 16 位完全符合 Windows Server 复杂性策略且兼顾 Telegram 安全字符的高熵密码
+$upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+$lower = 'abcdefghijkmnopqrstuvwxyz'
+$digits = '23456789'
+$symbols = '!@#$%=+?'
+$allChars = $upper + $lower + $digits + $symbols
+
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $bytes = New-Object byte[] 16
-(New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes)
-$randomPass = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
-net.exe user runneradmin $randomPass | Out-Null
+$rng.GetBytes($bytes)
+
+$passList = @()
+$passList += $upper[$bytes[0] % $upper.Length]
+$passList += $lower[$bytes[1] % $lower.Length]
+$passList += $digits[$bytes[2] % $digits.Length]
+$passList += $symbols[$bytes[3] % $symbols.Length]
+
+for ($i = 4; $i -lt 16; $i++) {
+  $passList += $allChars[$bytes[$i] % $allChars.Length]
+}
+
+$randomPass = -join ($passList | Sort-Object { [System.Guid]::NewGuid() })
+net.exe user runneradmin $randomPass 2>$null | Out-Null
 
 # 2. 启动 Windows 原生 OpenSSH 服务并配置双认证
-Start-Service sshd | Out-Null
-Set-Service -Name sshd -StartupType 'Automatic' | Out-Null
+Start-Service sshd 2>$null | Out-Null
+Set-Service -Name sshd -StartupType 'Automatic' 2>$null | Out-Null
 
 $keys = $env:SSH_KEY.Trim()
 $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
@@ -20,8 +38,8 @@ $userSshDir = "C:\Users\runneradmin\.ssh"
 if (-not (Test-Path $userSshDir)) { New-Item -ItemType Directory -Path $userSshDir -Force | Out-Null }
 Set-Content -Path "$userSshDir\authorized_keys" -Value $keys -Encoding ascii
 
-icacls.exe $authFile /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" | Out-Null
-icacls.exe "$userSshDir\authorized_keys" /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" | Out-Null
+icacls.exe $authFile /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" 2>$null | Out-Null
+icacls.exe "$userSshDir\authorized_keys" /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" 2>$null | Out-Null
 
 $sshdConfig = "C:\ProgramData\ssh\sshd_config"
 if (Test-Path $sshdConfig) {
@@ -31,17 +49,17 @@ if (Test-Path $sshdConfig) {
     $conf = $conf -replace '#?StrictModes.*', 'StrictModes no'
     Set-Content -Path $sshdConfig -Value $conf
 }
-Restart-Service sshd | Out-Null
+Restart-Service sshd 2>$null | Out-Null
 
 # 3. 部署并启用 Cloudflare WARP 出口（净化出口 IP）
 try {
-  winget install Cloudflare.Warp --silent --accept-package-agreements --accept-source-agreements | Out-Null
+  winget install Cloudflare.Warp --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
   $warpCli = "C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe"
   if (Test-Path $warpCli) {
     Start-Sleep -Seconds 3
-    & $warpCli --accept-tos registration new | Out-Null
-    & $warpCli --accept-tos mode warp | Out-Null
-    & $warpCli --accept-tos connect | Out-Null
+    & $warpCli --accept-tos registration new 2>$null | Out-Null
+    & $warpCli --accept-tos mode warp 2>$null | Out-Null
+    & $warpCli --accept-tos connect 2>$null | Out-Null
   }
 } catch {}
 
@@ -87,9 +105,9 @@ if ($env:FRP_SERVER_HOST -and $env:FRP_TOKEN) {
 # 4.2 备用 Ngrok 原生 TCP 隧道
 if (-not $sshCmd -and $env:NGROK_AUTHTOKEN) {
   try {
-    choco install ngrok -y --no-progress | Out-Null
+    choco install ngrok -y --no-progress 2>$null | Out-Null
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-    ngrok config add-authtoken $env:NGROK_AUTHTOKEN | Out-Null
+    ngrok config add-authtoken $env:NGROK_AUTHTOKEN 2>$null | Out-Null
     Start-Process -FilePath "ngrok.exe" -ArgumentList "tcp 22 --log=stdout" -RedirectStandardOutput "C:\ngrok.log" -WindowStyle Hidden
 
     for ($i = 0; $i -lt 15; $i++) {
@@ -165,7 +183,7 @@ $tgPayload = @{
   parse_mode = "HTML"
 } | ConvertTo-Json
 
-for ($retry = 0; $retry -lt 3; $retry++) {
+for ($retry = 0; $retry -lt 5; $retry++) {
   try {
     $r = Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $tgPayload -ContentType "application/json; charset=utf-8" -TimeoutSec 10
     if ($r.ok) { break }
