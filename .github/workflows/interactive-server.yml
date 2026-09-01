@@ -45,6 +45,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           FRP_SERVER_HOST: ${{ secrets.FRP_SERVER_HOST }}
           FRP_SERVER_PORT: ${{ secrets.FRP_SERVER_PORT }}
@@ -60,6 +61,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
