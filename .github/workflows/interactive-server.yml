@@ -42,67 +42,87 @@ jobs:
         if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'rust-only'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install tmate (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed libevent libssh msgpack-c tmate
-
-      - name: Install tmate (Linux)
+      - name: Launch Interactive SSH Server (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y tmate
-
-      - name: Launch Secure SSH Server & Notify Telegram
         shell: bash
         env:
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          sudo apt-get update -y && sudo apt-get install -y tmate
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys || true
+          chmod 600 ~/.ssh/authorized_keys
 
-          # 配置 tmate 仅允许授权 SSH 公钥登录
           cat << 'EOF' > ~/.tmate.conf
           set -g tmate-authorized-keys "~/.ssh/authorized_keys"
           EOF
 
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp ~/.tmate.conf /home/runneradmin/.tmate.conf 2>/dev/null || true
-            cp ~/.ssh/authorized_keys /home/runneradmin/.ssh/authorized_keys 2>/dev/null || true
-            SOCKET="C:/msys64/tmp/tmate.sock"
-            C:/msys64/usr/bin/tmate.exe -S "$SOCKET" -F new-session -d || C:/msys64/usr/bin/tmate.exe -S "$SOCKET" new-session -d
-            C:/msys64/usr/bin/tmate.exe -S "$SOCKET" wait tmate-ready
-            SSH_CMD=$(C:/msys64/usr/bin/tmate.exe -S "$SOCKET" display -p '#{tmate_ssh}')
-            WEB_CMD=$(C:/msys64/usr/bin/tmate.exe -S "$SOCKET" display -p '#{tmate_web}')
-          else
-            SOCKET="/tmp/tmate.sock"
-            tmate -S "$SOCKET" -F new-session -d || tmate -S "$SOCKET" new-session -d
-            tmate -S "$SOCKET" wait tmate-ready
-            SSH_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_ssh}')
-            WEB_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_web}')
-          fi
+          SOCKET="/tmp/tmate.sock"
+          tmate -S "$SOCKET" -F new-session -d || tmate -S "$SOCKET" new-session -d
+          tmate -S "$SOCKET" wait tmate-ready
+          SSH_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_ssh}')
+          WEB_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_web}')
 
-          echo "============================================================"
-          echo "🔒 Interactive Cloud Build Server is LIVE & READY!"
-          echo "📨 Sending SSH credentials directly to Telegram..."
-          echo "============================================================"
-
-          MSG="🚀 <b>Cloud Build Server Online!</b>%0A💻 <b>OS:</b> ${RUNNER_OS}%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>${SSH_CMD}</code>%0A🌐 <b>Web Terminal:</b>%0A${WEB_CMD}%0A⏱️ <b>Max Session:</b> 6 Hours"
+          MSG="🚀 <b>Cloud Linux Server Online!</b>%0A💻 <b>OS:</b> Ubuntu Linux%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>${SSH_CMD}</code>%0A🌐 <b>Web Terminal:</b>%0A${WEB_CMD}%0A⏱️ <b>Max Session:</b> 6 Hours"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${MSG}&parse_mode=HTML" > /dev/null || true
 
-          echo "✅ Credentials sent successfully to your Telegram!"
+          echo "============================================================"
+          echo "🔒 Linux Cloud Build Server is LIVE & READY!"
+          echo "📨 SSH credentials sent directly to your Telegram."
           echo "🛡️ Access restricted strictly to your authorized SSH key."
+          echo "============================================================"
 
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            while C:/msys64/usr/bin/ps.exe -ef | grep -v grep | grep -q tmate; do
-              sleep 10
-            done
-          else
-            while pgrep -f tmate > /dev/null 2>&1; do
-              sleep 10
-            done
-          fi
+          while pgrep -f tmate > /dev/null 2>&1; do
+            sleep 10
+          done
+
+      - name: Launch Interactive SSH Server (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          # 1. 启动 Windows 原生 OpenSSH 服务并锁定公钥
+          Start-Service sshd
+          Set-Service -Name sshd -StartupType 'Automatic'
+          $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
+          Set-Content -Path $authFile -Value $env:SSH_KEY -Encoding ascii
+          icacls.exe $authFile /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+
+          # 2. 下载并启动 cloudflared TCP 隧道
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
+          $logPath = "C:\cloudflared.log"
+          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
+
+          # 3. 等待隧道域名生成
+          $domain = ""
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $logPath) {
+              $content = Get-Content $logPath -Raw
+              if ($content -match 'https://([a-zA-Z0-9-]+\.trycloudflare\.com)') {
+                $domain = $matches[1]
+                break
+              }
+            }
+          }
+
+          # 4. 构建并推送 Telegram 通知
+          $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
+          $msg = "🚀 <b>Cloud Windows Server Online!</b>%0A💻 <b>OS:</b> Windows Server (Native OpenSSH)%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>$sshCmd</code>%0A🌐 <b>Tunnel Domain:</b>%0A<code>$domain</code>%0A⏱️ <b>Max Session:</b> 6 Hours"
+
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage?chat_id=$($env:TELEGRAM_CHAT_ID)&text=$msg&parse_mode=HTML" | Out-Null
+
+          Write-Host "============================================================"
+          Write-Host "🔒 Windows Cloud Build Server is LIVE & READY!"
+          Write-Host "📨 SSH connection command has been sent to your Telegram."
+          Write-Host "🛡️ Access restricted strictly to your authorized SSH key."
+          Write-Host "============================================================"
+
+          # 5. 保持开机 6 小时
+          Start-Sleep -Seconds 21600
