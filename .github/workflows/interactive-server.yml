@@ -87,19 +87,38 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 1. 启动 Windows 原生 OpenSSH 服务并锁定公钥
+          # 1. 启动 Windows 原生 OpenSSH 服务
           Start-Service sshd
           Set-Service -Name sshd -StartupType 'Automatic'
-          $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
-          Set-Content -Path $authFile -Value $env:SSH_KEY -Encoding ascii
-          icacls.exe $authFile /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
 
-          # 2. 下载并启动 cloudflared TCP 隧道
+          # 2. 写入授权公钥并配置 StrictModes no
+          $keys = $env:SSH_KEY.Trim()
+          $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
+          Set-Content -Path $authFile -Value $keys -Encoding ascii
+
+          $userSshDir = "C:\Users\runneradmin\.ssh"
+          if (-not (Test-Path $userSshDir)) { New-Item -ItemType Directory -Path $userSshDir -Force | Out-Null }
+          Set-Content -Path "$userSshDir\authorized_keys" -Value $keys -Encoding ascii
+
+          # 微软标准 ACL 配置
+          icacls.exe $authFile /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" | Out-Null
+          icacls.exe "$userSshDir\authorized_keys" /inheritance:r /grant "SYSTEM:F" /grant "Administrators:F" /grant "runneradmin:F" | Out-Null
+
+          $sshdConfig = "C:\ProgramData\ssh\sshd_config"
+          if (Test-Path $sshdConfig) {
+              $conf = Get-Content $sshdConfig -Raw
+              $conf = $conf -replace '#?PubkeyAuthentication.*', 'PubkeyAuthentication yes'
+              $conf = $conf -replace '#?StrictModes.*', 'StrictModes no'
+              Set-Content -Path $sshdConfig -Value $conf
+          }
+          Restart-Service sshd
+
+          # 3. 下载并启动 cloudflared TCP 隧道
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
           $logPath = "C:\cloudflared.log"
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
 
-          # 3. 等待隧道域名生成
+          # 4. 等待隧道域名生成
           $domain = ""
           for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
@@ -112,7 +131,7 @@ jobs:
             }
           }
 
-          # 4. 构建并推送 Telegram 通知
+          # 5. 构建并推送 Telegram 通知
           $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
           $msgText = "🚀 Cloud Windows Server Online!`n💻 OS: Windows Server (Native OpenSSH)`n🔒 Auth: SSH Public Key Authentication`n🔑 SSH Command:`n$sshCmd`n🌐 Tunnel Domain:`n$domain`n⏱️ Max Session: 6 Hours"
 
@@ -129,5 +148,5 @@ jobs:
           Write-Host "🛡️ Access restricted strictly to your authorized SSH key."
           Write-Host "============================================================"
 
-          # 5. 保持开机 6 小时
+          # 6. 保持开机 6 小时
           Start-Sleep -Seconds 21600
