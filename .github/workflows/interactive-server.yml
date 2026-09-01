@@ -103,24 +103,26 @@ jobs:
           $tunnelNode = ""
 
           if ($env:NGROK_AUTHTOKEN) {
-            Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "C:\ngrok.zip" | Out-Null
-            Expand-Archive -Path "C:\ngrok.zip" -DestinationPath "C:\ngrok" -Force | Out-Null
-            & "C:\ngrok\ngrok.exe" config add-authtoken $env:NGROK_AUTHTOKEN | Out-Null
-            Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "tcp 22 --log=stdout" -RedirectStandardOutput "C:\ngrok.log" -WindowStyle Hidden
+            try {
+              choco install ngrok -y --no-progress | Out-Null
+              $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+              ngrok config add-authtoken $env:NGROK_AUTHTOKEN | Out-Null
+              Start-Process -FilePath "ngrok.exe" -ArgumentList "tcp 22 --log=stdout" -RedirectStandardOutput "C:\ngrok.log" -WindowStyle Hidden
 
-            for ($i = 0; $i -lt 20; $i++) {
-              Start-Sleep -Seconds 2
-              try {
-                $res = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 2
-                if ($res.tunnels -and $res.tunnels.Count -gt 0) {
-                  $pUrl = $res.tunnels[0].public_url
-                  $u = [System.Uri]$pUrl
-                  $sshCmd = "ssh -p $($u.Port) runneradmin@$($u.Host)"
-                  $tunnelNode = "$($u.Host):$($u.Port) (Ngrok 原生极速 TCP)"
-                  break
-                }
-              } catch {}
-            }
+              for ($i = 0; $i -lt 20; $i++) {
+                Start-Sleep -Seconds 2
+                try {
+                  $res = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 2
+                  if ($res.tunnels -and $res.tunnels.Count -gt 0) {
+                    $pUrl = $res.tunnels[0].public_url
+                    $u = [System.Uri]$pUrl
+                    $sshCmd = "ssh -p $($u.Port) runneradmin@$($u.Host)"
+                    $tunnelNode = "$($u.Host):$($u.Port) (Ngrok 原生极速 TCP)"
+                    break
+                  }
+                } catch {}
+              }
+            } catch {}
           }
 
           if (-not $sshCmd) {
@@ -151,7 +153,7 @@ jobs:
 
           # 5. 推送 Telegram 私密消息
           $lines = @(
-            "🚀 <b>构建环境已就绪（极速直连模式）</b>",
+            "🚀 <b>构建环境已就绪（极速原生 TCP 模式）</b>",
             "",
             "💻 <b>系统架构：</b> Windows Server (x86_64)",
             "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (WARP 净化)",
