@@ -114,8 +114,8 @@ jobs:
               Expand-Archive -Path "C:\frp.zip" -DestinationPath "C:\frp" -Force | Out-Null
               $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe").FullName
 
-              $port = if ($env:FRP_SERVER_PORT) { $env:FRP_SERVER_PORT } else { "50050" }
-              $rPort = if ($env:FRP_REMOTE_PORT) { $env:FRP_REMOTE_PORT } else { "50011" }
+              $port = if ($env:FRP_SERVER_PORT) { [int]$env:FRP_SERVER_PORT } else { 50050 }
+              $rPort = if ($env:FRP_REMOTE_PORT) { [int]$env:FRP_REMOTE_PORT } else { 50011 }
 
               $toml = @(
                 "serverAddr = `"$($env:FRP_SERVER_HOST)`"",
@@ -132,11 +132,11 @@ jobs:
               ) -join "`n"
 
               Set-Content -Path "C:\frpc.toml" -Value $toml -Encoding utf8
-              Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -WindowStyle Hidden
+              Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -RedirectStandardOutput "C:\frpc.log" -RedirectStandardError "C:\frpc_err.log" -WindowStyle Hidden
 
               Start-Sleep -Seconds 3
               $sshCmd = "ssh -p $rPort runneradmin@$($env:FRP_SERVER_HOST)"
-              $tunnelNode = "$($env:FRP_SERVER_HOST):$rPort (专属 FRP 极速专线)"
+              $tunnelNode = "$($env:FRP_SERVER_HOST):$rPort (专属东京 VPS 极速专线)"
             } catch {}
           }
 
@@ -193,7 +193,7 @@ jobs:
 
           # 5. 推送 Telegram 私密消息
           $lines = @(
-            "🚀 <b>构建环境已就绪（专属 FRP 极速专线）</b>",
+            "🚀 <b>构建环境已就绪（专属东京 VPS 极速专线）</b>",
             "",
             "💻 <b>系统架构：</b> Windows Server (x86_64)",
             "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (WARP 净化)",
@@ -212,7 +212,7 @@ jobs:
             "🌐 <b>隧道节点：</b>",
             "<code>$tunnelNode</code>",
             "",
-            "💡 <i>提示：专属 VPS 专线延迟极低，打字如本地般流畅。构建完毕输入 exit 即可自毁。</i>"
+            "💡 <i>提示：专属 VPS 专线延迟极低（~30ms），打字如本地般流畅。构建完毕输入 exit 即可自毁。</i>"
           )
           $body = @{
             chat_id = $env:TELEGRAM_CHAT_ID
