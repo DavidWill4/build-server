@@ -1,0 +1,48 @@
+name: Interactive Cloud Build Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: 'Target Operating System'
+        required: true
+        default: 'windows-latest'
+        type: choice
+        options:
+          - windows-latest
+          - ubuntu-latest
+      toolchain:
+        description: 'Pre-installed Developer Toolchain'
+        required: true
+        default: 'rust-and-node'
+        type: choice
+        options:
+          - rust-and-node
+          - node-only
+          - rust-only
+          - minimal
+
+concurrency:
+  group: interactive-build-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  server:
+    name: Cloud Server (${{ github.event.inputs.os || 'windows-latest' }})
+    runs-on: ${{ github.event.inputs.os || 'windows-latest' }}
+
+    steps:
+      - name: Setup Node.js
+        if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'node-only'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Setup Rust toolchain
+        if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'rust-only'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Launch Interactive SSH Server
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: false
