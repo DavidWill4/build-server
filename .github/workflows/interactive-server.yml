@@ -110,14 +110,16 @@ jobs:
           if ($env:FRP_SERVER_HOST -and $env:FRP_TOKEN) {
             try {
               $frpUrl = "https://github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_windows_amd64.zip"
-              Invoke-WebRequest -Uri $frpUrl -OutFile "C:\frp.zip" | Out-Null
+              Invoke-WebRequest -Uri $frpUrl -OutFile "C:\frp.zip" -UseBasicParsing | Out-Null
               Expand-Archive -Path "C:\frp.zip" -DestinationPath "C:\frp" -Force | Out-Null
-              $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe").FullName
+              $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe" | Select-Object -First 1).FullName
 
-              $port = if ($env:FRP_SERVER_PORT) { [int]$env:FRP_SERVER_PORT } else { 50050 }
-              $rPort = if ($env:FRP_REMOTE_PORT) { [int]$env:FRP_REMOTE_PORT } else { 50011 }
+              $port = 50050
+              if ($env:FRP_SERVER_PORT) { [int]::TryParse($env:FRP_SERVER_PORT, [ref]$port) | Out-Null }
+              $rPort = 50011
+              if ($env:FRP_REMOTE_PORT) { [int]::TryParse($env:FRP_REMOTE_PORT, [ref]$rPort) | Out-Null }
 
-              $toml = @(
+              $lines = @(
                 "serverAddr = `"$($env:FRP_SERVER_HOST)`"",
                 "serverPort = $port",
                 "auth.method = `"token`"",
@@ -129,9 +131,8 @@ jobs:
                 "localIP = `"127.0.0.1`"",
                 "localPort = 22",
                 "remotePort = $rPort"
-              ) -join "`n"
-
-              Set-Content -Path "C:\frpc.toml" -Value $toml -Encoding utf8
+              )
+              Set-Content -Path "C:\frpc.toml" -Value ($lines -join "`n") -Encoding utf8
               Start-Process -FilePath $frpExe -ArgumentList "-c C:\frpc.toml" -RedirectStandardOutput "C:\frpc.log" -RedirectStandardError "C:\frpc_err.log" -WindowStyle Hidden
 
               Start-Sleep -Seconds 3
