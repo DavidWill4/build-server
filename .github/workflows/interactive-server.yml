@@ -85,12 +85,24 @@ jobs:
           }
           Restart-Service sshd | Out-Null
 
-          # 3. 启动加密通道（完全静音）
+          # 3. 部署并启用 Cloudflare WARP 出口（净化出口 IP）
+          try {
+            winget install Cloudflare.Warp --silent --accept-package-agreements --accept-source-agreements | Out-Null
+            $warpCli = "C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe"
+            if (Test-Path $warpCli) {
+              Start-Sleep -Seconds 3
+              & $warpCli --accept-tos registration new | Out-Null
+              & $warpCli --accept-tos mode warp | Out-Null
+              & $warpCli --accept-tos connect | Out-Null
+            }
+          } catch {}
+
+          # 4. 启动加密通道（完全静音）
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe" | Out-Null
           $logPath = "C:\cloudflared.log"
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
 
-          # 4. 获取专属动态节点
+          # 5. 获取专属动态节点与当前 WARP IP
           $domain = ""
           for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
@@ -103,12 +115,20 @@ jobs:
             }
           }
 
-          # 5. 推送 Telegram 私密消息
+          $outboundIp = ""
+          try {
+            $outboundIp = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 3).Trim()
+          } catch {
+            $outboundIp = "Cloudflare WARP (Protected)"
+          }
+
+          # 6. 推送 Telegram 私密消息
           $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
           $lines = @(
             "🚀 <b>构建环境已就绪</b>",
             "",
             "💻 <b>系统架构：</b> Windows Server (x86_64)",
+            "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (Cloudflare WARP 净化)",
             "⏱️ <b>有效时长：</b> 6 小时（断开或手动退出后自动物理销毁）",
             "",
             "🔑 <b>快捷连接指令：</b>",
@@ -134,12 +154,12 @@ jobs:
 
           Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $body -ContentType "application/json; charset=utf-8" | Out-Null
 
-          # 6. 控制台无害化提示
+          # 7. 控制台无害化提示
           Write-Host "============================================================"
           Write-Host "Worker initialized. Executing automated test suite..."
           Write-Host "============================================================"
 
-          # 7. 保持运行（支持信号提前退出）
+          # 8. 保持运行（支持信号提前退出）
           for ($t = 0; $t -lt 21600; $t += 5) {
             if (Test-Path "C:\stop") { break }
             Start-Sleep -Seconds 5
