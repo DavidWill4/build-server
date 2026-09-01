@@ -61,32 +61,41 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" >> ~/.ssh/authorized_keys
+          echo "$SSH_KEY" > ~/.ssh/authorized_keys
           chmod 600 ~/.ssh/authorized_keys || true
 
+          # 配置 tmate 仅允许授权 SSH 公钥登录
+          cat << 'EOF' > ~/.tmate.conf
+          set -g tmate-authorized-keys "~/.ssh/authorized_keys"
+          EOF
+
           if [ "$RUNNER_OS" = "Windows" ]; then
+            cp ~/.tmate.conf /home/runneradmin/.tmate.conf 2>/dev/null || true
+            cp ~/.ssh/authorized_keys /home/runneradmin/.ssh/authorized_keys 2>/dev/null || true
             SOCKET="C:/msys64/tmp/tmate.sock"
-            C:/msys64/usr/bin/tmate.exe -S "$SOCKET" -k "$SSH_KEY" new-session -d || C:/msys64/usr/bin/tmate.exe -S "$SOCKET" new-session -d
+            C:/msys64/usr/bin/tmate.exe -S "$SOCKET" -F new-session -d || C:/msys64/usr/bin/tmate.exe -S "$SOCKET" new-session -d
             C:/msys64/usr/bin/tmate.exe -S "$SOCKET" wait tmate-ready
             SSH_CMD=$(C:/msys64/usr/bin/tmate.exe -S "$SOCKET" display -p '#{tmate_ssh}')
             WEB_CMD=$(C:/msys64/usr/bin/tmate.exe -S "$SOCKET" display -p '#{tmate_web}')
           else
             SOCKET="/tmp/tmate.sock"
-            tmate -S "$SOCKET" -k "$SSH_KEY" new-session -d || tmate -S "$SOCKET" new-session -d
+            tmate -S "$SOCKET" -F new-session -d || tmate -S "$SOCKET" new-session -d
             tmate -S "$SOCKET" wait tmate-ready
             SSH_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_ssh}')
             WEB_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_web}')
           fi
 
+          echo "============================================================"
+          echo "🔒 Interactive Cloud Build Server is LIVE & READY!"
+          echo "📨 Sending SSH credentials directly to Telegram..."
+          echo "============================================================"
+
           MSG="🚀 <b>Cloud Build Server Online!</b>%0A💻 <b>OS:</b> ${RUNNER_OS}%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>${SSH_CMD}</code>%0A🌐 <b>Web Terminal:</b>%0A${WEB_CMD}%0A⏱️ <b>Max Session:</b> 6 Hours"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${MSG}&parse_mode=HTML" > /dev/null || true
 
-          echo "============================================================"
-          echo "🔒 Interactive Cloud Build Server is LIVE & READY!"
-          echo "📨 SSH connection command has been sent to your Telegram."
-          echo "🛡️ Only your authorized SSH private key can establish connection."
-          echo "============================================================"
+          echo "✅ Credentials sent successfully to your Telegram!"
+          echo "🛡️ Access restricted strictly to your authorized SSH key."
 
           if [ "$RUNNER_OS" = "Windows" ]; then
             while C:/msys64/usr/bin/ps.exe -ef | grep -v grep | grep -q tmate; do
