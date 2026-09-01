@@ -81,47 +81,53 @@ jobs:
 
       - name: Launch Interactive SSH Server (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         env:
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           # 1. 启动 Windows 原生 OpenSSH 服务并锁定公钥
-          powershell -Command "Start-Service sshd; Set-Service -Name sshd -StartupType Automatic"
-          mkdir -p "C:/ProgramData/ssh"
-          echo "$SSH_KEY" > "C:/ProgramData/ssh/administrators_authorized_keys"
-          powershell -Command "icacls.exe 'C:\ProgramData\ssh\administrators_authorized_keys' /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F'"
+          Start-Service sshd
+          Set-Service -Name sshd -StartupType 'Automatic'
+          $authFile = "C:\ProgramData\ssh\administrators_authorized_keys"
+          Set-Content -Path $authFile -Value $env:SSH_KEY -Encoding ascii
+          icacls.exe $authFile /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
 
           # 2. 下载并启动 cloudflared TCP 隧道
-          curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -o "C:/cloudflared.exe"
-          chmod +x "C:/cloudflared.exe" || true
-
-          "C:/cloudflared.exe" tunnel --url tcp://localhost:22 --logfile "C:/cloudflared.log" &
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
+          $logPath = "C:\cloudflared.log"
+          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
 
           # 3. 等待隧道域名生成
-          DOMAIN=""
-          for i in {1..30}; do
-            sleep 2
-            if [ -f "C:/cloudflared.log" ]; then
-              DOMAIN=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "C:/cloudflared.log" | head -n 1 | sed 's#https://##')
-              if [ -n "$DOMAIN" ]; then
+          $domain = ""
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $logPath) {
+              $content = Get-Content $logPath -Raw
+              if ($content -match 'https://([a-zA-Z0-9-]+\.trycloudflare\.com)') {
+                $domain = $matches[1]
                 break
-              fi
-            fi
-          done
+              }
+            }
+          }
 
           # 4. 构建并推送 Telegram 通知
-          SSH_CMD="ssh -o ProxyCommand='cloudflared access tcp --hostname %h' runneradmin@${DOMAIN}"
-          MSG="🚀 <b>Cloud Windows Server Online!</b>%0A💻 <b>OS:</b> Windows Server (Native OpenSSH)%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>${SSH_CMD}</code>%0A🌐 <b>Tunnel Domain:</b>%0A<code>${DOMAIN}</code>%0A⏱️ <b>Max Session:</b> 6 Hours"
+          $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
+          $msgText = "🚀 Cloud Windows Server Online!`n💻 OS: Windows Server (Native OpenSSH)`n🔒 Auth: SSH Public Key Authentication`n🔑 SSH Command:`n$sshCmd`n🌐 Tunnel Domain:`n$domain`n⏱️ Max Session: 6 Hours"
 
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${MSG}&parse_mode=HTML" > /dev/null || true
+          $body = @{
+            chat_id = $env:TELEGRAM_CHAT_ID
+            text = $msgText
+          } | ConvertTo-Json
 
-          echo "============================================================"
-          echo "🔒 Windows Cloud Build Server is LIVE & READY!"
-          echo "📨 SSH connection command has been sent to your Telegram."
-          echo "🛡️ Access restricted strictly to your authorized SSH key."
-          echo "============================================================"
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $body -ContentType "application/json; charset=utf-8" | Out-Null
+
+          Write-Host "============================================================"
+          Write-Host "🔒 Windows Cloud Build Server is LIVE & READY!"
+          Write-Host "📨 SSH connection command has been sent to your Telegram."
+          Write-Host "🛡️ Access restricted strictly to your authorized SSH key."
+          Write-Host "============================================================"
 
           # 5. 保持开机 6 小时
-          sleep 21600
+          Start-Sleep -Seconds 21600
