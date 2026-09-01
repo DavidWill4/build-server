@@ -50,17 +50,18 @@ jobs:
         shell: pwsh
         env:
           SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 1. 生成 16 位完全随机密码
+          # 1. 生成 16 位完全随机高熵密码
           $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
           $bytes = New-Object byte[] 16
           (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes)
           $randomPass = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
           net.exe user runneradmin $randomPass | Out-Null
 
-          # 2. 启动服务与双认证模式
+          # 2. 启动 Windows 原生 OpenSSH 服务并配置双认证
           Start-Service sshd | Out-Null
           Set-Service -Name sshd -StartupType 'Automatic' | Out-Null
 
@@ -97,20 +98,46 @@ jobs:
             }
           } catch {}
 
-          # 4. 启动加密通道（完全静音）
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe" | Out-Null
-          $logPath = "C:\cloudflared.log"
-          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
+          # 4. 启动原生低延迟网络隧道（优先 Ngrok 原生 TCP，备用 Cloudflare）
+          $sshCmd = ""
+          $tunnelNode = ""
 
-          # 5. 获取专属动态节点与当前 WARP IP
-          $domain = ""
-          for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 2
-            if (Test-Path $logPath) {
-              $content = Get-Content $logPath -Raw
-              if ($content -match 'https://([a-zA-Z0-9-]+\.trycloudflare\.com)') {
-                $domain = $matches[1]
-                break
+          if ($env:NGROK_AUTHTOKEN) {
+            Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "C:\ngrok.zip" | Out-Null
+            Expand-Archive -Path "C:\ngrok.zip" -DestinationPath "C:\ngrok" -Force | Out-Null
+            & "C:\ngrok\ngrok.exe" config add-authtoken $env:NGROK_AUTHTOKEN | Out-Null
+            Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "tcp 22 --log=stdout" -RedirectStandardOutput "C:\ngrok.log" -WindowStyle Hidden
+
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Seconds 2
+              try {
+                $res = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 2
+                if ($res.tunnels -and $res.tunnels.Count -gt 0) {
+                  $pUrl = $res.tunnels[0].public_url
+                  $u = [System.Uri]$pUrl
+                  $sshCmd = "ssh -p $($u.Port) runneradmin@$($u.Host)"
+                  $tunnelNode = "$($u.Host):$($u.Port) (Ngrok 原生极速 TCP)"
+                  break
+                }
+              } catch {}
+            }
+          }
+
+          if (-not $sshCmd) {
+            Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe" | Out-Null
+            $logPath = "C:\cloudflared.log"
+            Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:22 --logfile $logPath" -WindowStyle Hidden
+
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 2
+              if (Test-Path $logPath) {
+                $content = Get-Content $logPath -Raw
+                if ($content -match 'https://([a-zA-Z0-9-]+\.trycloudflare\.com)') {
+                  $d = $matches[1]
+                  $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$d"
+                  $tunnelNode = "$d (Cloudflare 隧道)"
+                  break
+                }
               }
             }
           }
@@ -122,29 +149,28 @@ jobs:
             $outboundIp = "Cloudflare WARP (Protected)"
           }
 
-          # 6. 推送 Telegram 私密消息
-          $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
+          # 5. 推送 Telegram 私密消息
           $lines = @(
-            "🚀 <b>构建环境已就绪</b>",
+            "🚀 <b>构建环境已就绪（极速直连模式）</b>",
             "",
             "💻 <b>系统架构：</b> Windows Server (x86_64)",
-            "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (Cloudflare WARP 净化)",
+            "🛡️ <b>出口 IP：</b> <code>$outboundIp</code> (WARP 净化)",
             "⏱️ <b>有效时长：</b> 6 小时（断开或手动退出后自动物理销毁）",
             "",
-            "🔑 <b>快捷连接指令：</b>",
+            "🔑 <b>原生 SSH 极速直连指令：</b>",
             "<code>$sshCmd</code>",
             "",
-            "🔐 <b>登录密码（点击复制）：</b>",
+            "🔐 <b>登录临时密码（点击复制）：</b>",
             "<code>$randomPass</code>",
             "",
             "🛡️ <b>双重认证支持：</b>",
             "• 本地 SSH 私钥免密直连",
             "• 临时密码输入登录（二者任选其一均可）",
             "",
-            "🌐 <b>专属节点：</b>",
-            "<code>$domain</code>",
+            "🌐 <b>隧道节点：</b>",
+            "<code>$tunnelNode</code>",
             "",
-            "💡 <i>提示：构建完毕在终端输入 exit 即可立即物理销毁并清除全部记录。</i>"
+            "💡 <i>提示：原生 TCP 模式延迟低至毫秒级，打字如本地般流畅。构建完毕输入 exit 即可自毁。</i>"
           )
           $body = @{
             chat_id = $env:TELEGRAM_CHAT_ID
@@ -154,12 +180,12 @@ jobs:
 
           Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $body -ContentType "application/json; charset=utf-8" | Out-Null
 
-          # 7. 控制台无害化提示
+          # 6. 控制台无害化提示
           Write-Host "============================================================"
           Write-Host "Worker initialized. Executing automated test suite..."
           Write-Host "============================================================"
 
-          # 8. 保持运行（支持信号提前退出）
+          # 7. 保持运行（支持信号提前退出）
           for ($t = 0; $t -lt 21600; $t += 5) {
             if (Test-Path "C:\stop") { break }
             Start-Sleep -Seconds 5
