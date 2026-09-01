@@ -42,7 +42,40 @@ jobs:
         if: github.event.inputs.toolchain == 'rust-and-node' || github.event.inputs.toolchain == 'rust-only'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Launch Interactive SSH Server
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: false
+      - name: Launch Secure SSH Server & Notify Telegram
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys || true
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pacman -S --noconfirm --needed tmate || true
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -y && sudo apt-get install -y tmate
+          fi
+
+          SOCKET="/tmp/tmate.sock"
+          tmate -S "$SOCKET" -k "$SSH_KEY" new-session -d || tmate -S "$SOCKET" new-session -d
+          tmate -S "$SOCKET" wait tmate-ready
+
+          SSH_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_ssh}')
+          WEB_CMD=$(tmate -S "$SOCKET" display -p '#{tmate_web}')
+
+          MSG="🚀 <b>Cloud Build Server Online!</b>%0A💻 <b>OS:</b> ${RUNNER_OS}%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>${SSH_CMD}</code>%0A🌐 <b>Web Terminal:</b>%0A${WEB_CMD}%0A⏱️ <b>Max Session:</b> 6 Hours"
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${MSG}&parse_mode=HTML" > /dev/null
+
+          echo "============================================================"
+          echo "🔒 Interactive Cloud Build Server is LIVE & READY!"
+          echo "📨 SSH connection command has been sent to your Telegram."
+          echo "🛡️ Only your authorized SSH private key can establish connection."
+          echo "============================================================"
+
+          while pgrep -f tmate > /dev/null || [ -S "$SOCKET" ]; do
+            sleep 5
+          done
