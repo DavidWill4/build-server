@@ -24,7 +24,7 @@ on:
 
 concurrency:
   group: interactive-build-server-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   server:
@@ -114,9 +114,13 @@ jobs:
 
           # 4. 构建并推送 Telegram 通知
           $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
-          $msg = "🚀 <b>Cloud Windows Server Online!</b>%0A💻 <b>OS:</b> Windows Server (Native OpenSSH)%0A🔒 <b>Auth:</b> SSH Public Key Authentication%0A🔑 <b>SSH Command:</b>%0A<code>$sshCmd</code>%0A🌐 <b>Tunnel Domain:</b>%0A<code>$domain</code>%0A⏱️ <b>Max Session:</b> 6 Hours"
+          $payload = @{
+            chat_id = $env:TELEGRAM_CHAT_ID
+            text = "🚀 <b>Cloud Windows Server Online!</b>`n💻 <b>OS:</b> Windows Server (Native OpenSSH)`n🔒 <b>Auth:</b> SSH Public Key Authentication`n🔑 <b>SSH Command:</b>`n<code>$sshCmd</code>`n🌐 <b>Tunnel Domain:</b>`n<code>$domain</code>`n⏱️ <b>Max Session:</b> 6 Hours"
+            parse_mode = "HTML"
+          } | ConvertTo-Json
 
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage?chat_id=$($env:TELEGRAM_CHAT_ID)&text=$msg&parse_mode=HTML" | Out-Null
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $payload -ContentType "application/json" | Out-Null
 
           Write-Host "============================================================"
           Write-Host "🔒 Windows Cloud Build Server is LIVE & READY!"
