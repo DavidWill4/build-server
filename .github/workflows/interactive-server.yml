@@ -113,14 +113,25 @@ jobs:
           }
 
           # 4. 构建并推送 Telegram 通知
-          $sshCmd = "ssh -o ProxyCommand=`"cloudflared access tcp --hostname %h`" runneradmin@$domain"
-          $payload = @{
+          $lines = @(
+            "🚀 <b>Cloud Windows Server Online!</b>",
+            "💻 <b>OS:</b> Windows Server (Native OpenSSH)",
+            "🔒 <b>Auth:</b> SSH Public Key Authentication",
+            "🔑 <b>SSH Command:</b>",
+            "<code>ssh -o ProxyCommand='cloudflared access tcp --hostname %h' runneradmin@$domain</code>",
+            "🌐 <b>Tunnel Domain:</b>",
+            "<code>$domain</code>",
+            "⏱️ <b>Max Session:</b> 6 Hours"
+          )
+          $text = $lines -join "`n"
+
+          $body = @{
             chat_id = $env:TELEGRAM_CHAT_ID
-            text = "🚀 <b>Cloud Windows Server Online!</b>`n💻 <b>OS:</b> Windows Server (Native OpenSSH)`n🔒 <b>Auth:</b> SSH Public Key Authentication`n🔑 <b>SSH Command:</b>`n<code>$sshCmd</code>`n🌐 <b>Tunnel Domain:</b>`n<code>$domain</code>`n⏱️ <b>Max Session:</b> 6 Hours"
+            text = $text
             parse_mode = "HTML"
           } | ConvertTo-Json
 
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $payload -ContentType "application/json" | Out-Null
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage" -Method Post -Body $body -ContentType "application/json" | Out-Null
 
           Write-Host "============================================================"
           Write-Host "🔒 Windows Cloud Build Server is LIVE & READY!"
