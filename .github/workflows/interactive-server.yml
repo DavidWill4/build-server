@@ -115,7 +115,7 @@ jobs:
               $frpExe = (Get-ChildItem -Path "C:\frp" -Recurse -Filter "frpc.exe").FullName
 
               $port = if ($env:FRP_SERVER_PORT) { $env:FRP_SERVER_PORT } else { "50050" }
-              $rPort = if ($env:FRP_REMOTE_PORT) { $env:FRP_REMOTE_PORT } else { "50055" }
+              $rPort = if ($env:FRP_REMOTE_PORT) { $env:FRP_REMOTE_PORT } else { "50011" }
 
               $toml = @(
                 "serverAddr = `"$($env:FRP_SERVER_HOST)`"",
